@@ -8,11 +8,14 @@ authentication.
 """
 
 from typing import List
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import schemas, models, crud
+from ..security_core import generate_email_token, hash_email_token
+from ..emailer import send_verification_email
 from ..database import SessionLocal
 from ..auth import get_current_active_user, rate_limit
 
@@ -41,7 +44,15 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)) -> sche
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
         )
-    return crud.create_user(db=db, user=user)
+    created = crud.create_user(db=db, user=user)
+
+    # Phase B: email verification
+    ttl_minutes = int(os.getenv("VERIFY_EMAIL_TTL_MINUTES", "1440"))  # 24h
+    raw = generate_email_token()
+    crud.create_email_token(db, created.id, "verify", hash_email_token(raw), ttl_minutes)
+    send_verification_email(created.email, raw)
+
+    return created
 
 
 @router.get("/me", response_model=schemas.User)
